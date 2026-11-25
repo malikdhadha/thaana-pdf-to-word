@@ -67,7 +67,9 @@ export function findBlocks(g, w, h, thr) {
   const medh = (x0, y0, x1, y1) => {
     const hs = [];
     for (const c of cc) if (c[0] >= x0 && c[0] + c[2] <= x1 && c[1] >= y0 && c[1] + c[3] <= y1) hs.push(c[3]);
-    if (!hs.length) return 15; hs.sort((a, b) => a - b); return hs[hs.length >> 1];
+    // about half of all Thaana ink blobs are vowel signs, so the middle value would be a vowel-sign
+    // height: take the upper quarter, which is a letter.
+    if (!hs.length) return 15; hs.sort((a, b) => a - b); return hs[Math.floor(hs.length * 0.75)];
   };
   // work at the size where a typical letter is ~15 px, so thresholds match the prototype
   const globalMed = medh(0, 0, w, h);

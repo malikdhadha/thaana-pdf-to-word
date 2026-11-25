@@ -12,7 +12,7 @@ npm install || { echo "npm install failed"; read -r -p "Press Enter to close…"
 echo "Building the app…"
 if ! npm run dist:mac; then
   echo "Universal build failed - building separate Intel and Apple-chip versions instead…"
-  npm run dist:mac-separate || { echo "Build failed — copy the messages above and send them to Claude."; read -r -p "Press Enter to close…" _; exit 1; }
+  npm run dist:mac-separate || { echo "Build failed — copy the messages above and open an issue on the project's GitHub page with them."; read -r -p "Press Enter to close…" _; exit 1; }
 fi
 echo
 echo "Done! The installer is in the 'dist' folder:"

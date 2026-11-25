@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# word lists and models are data: keep them byte-for-byte on every platform
+lang/*.txt text eol=lf
+*.traineddata binary

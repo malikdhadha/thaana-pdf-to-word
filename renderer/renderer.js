@@ -2,6 +2,7 @@ import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
 pdfjsLib.GlobalWorkerOptions.workerSrc = '../node_modules/pdfjs-dist/build/pdf.worker.mjs';
 import { pageGlyphs, rebuild } from './pdfglyphs.js';
 import { Repairer } from './repair.js';
+import { joinPdfLines, textLooksComplete, hasThaana, looksScanned } from './pdftext.js';
 import { findBlocks } from './columns.js';
 import { removeRuling, grayToCanvas, normalize, otsu, findSkew, rotateGray, findLines, cropToPng, paragraphBreaks } from './segment.js';
 
@@ -14,29 +15,10 @@ let busy = false;
 let baseName = 'thaana-text';
 let repairer = null;
 async function getRepairer() {
-  if (!repairer) repairer = new Repairer((await window.ocr.readWords()).split('\n'));
+  // \r?\n: a Windows checkout has CRLF line endings, and "word\r" never matches anything
+  if (!repairer) repairer = new Repairer((await window.ocr.readWords()).split(/\r?\n/).filter(Boolean));
   return repairer;
 }
-// A PDF line that runs nearly the full width continues into the next one; a short line ends a paragraph.
-function joinPdfLines(lines, join) {
-  lines = lines.filter((l) => l.trim());
-  if (!join) return lines.join('\n');
-  const max = Math.max(...lines.map((l) => l.length), 1);
-  let out = '';
-  lines.forEach((l, i) => {
-    out += l;
-    if (i < lines.length - 1) out += (l.length < max * 0.72 || /^\s*\d+[.)]/.test(lines[i + 1])) ? '\n' : ' ';
-  });
-  return out;
-}
-// Some PDFs lose most vowel signs in their text layer. Real Dhivehi has about one per letter;
-// if far fewer come out, the text can't be trusted and the page is read as a picture instead.
-function textLooksComplete(s) {
-  const base = (s.match(/[\u0780-\u07A5\u07B1]/g) || []).length;
-  const fili = (s.match(/[\u07A6-\u07B0]/g) || []).length;
-  return base < 100 || fili / base >= 0.95;
-}
-const hasThaana = (s) => (s.match(/[\u0780-\u07B1]/g) || []).length >= 15;
 function refreshPdfText() {
   const t = pages.map((p) => p.text).filter(Boolean).join('\n\n');
   if (t) textEl.value = t;
@@ -55,23 +37,26 @@ function refreshButtons() {
 }
 
 /* ---------- loading files ---------- */
-async function addFile({ name, data, ext }) {
+// data: base64 (from the Open dialog) or bytes: Uint8Array (drag & drop).
+async function addFile({ name, data, bytes, ext }) {
   baseName = name.replace(/\.[^.]+$/, '');
+  if (!bytes) bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
   if (ext === '.pdf') {
-    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
     const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
     const useText = $('optPdfText').checked;
     let fromText = 0; const mine = [];
     for (let p = 1; p <= pdf.numPages; p++) {
       setStatus(`Opening ${name} — page ${p} of ${pdf.numPages}…`);
       const page = await pdf.getPage(p);
-      let txt = '', incomplete = false;
+      let txt = '', incomplete = false, scanned = false;
       if (useText) {
         try {
-          const lines = rebuild(await pageGlyphs(pdfjsLib, page), { dropArabic: $('optNoArabic').checked });
+          const found = await pageGlyphs(pdfjsLib, page);
+          const lines = rebuild(found, { dropArabic: $('optNoArabic').checked });
           const raw = lines.join('\n');
           if (hasThaana(raw) && !textLooksComplete(raw)) incomplete = true;
           if (hasThaana(raw) && textLooksComplete(raw)) txt = joinPdfLines((await getRepairer()).fixText(raw).split('\n'), $('optJoin').checked);
+          if (!txt && !incomplete) scanned = looksScanned(found);
         } catch (e) { console.warn('PDF text failed on page', p, e); }
       }
       const vp1 = page.getViewport({ scale: 1 });
@@ -81,21 +66,28 @@ async function addFile({ name, data, ext }) {
       c.width = Math.round(vp.width); c.height = Math.round(vp.height);
       const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      const pg = addPage(`${name} · p${p}`, c); pg.incomplete = incomplete; mine.push(pg);
+      const pg = addPage(`${name} · p${p}`, c); pg.incomplete = incomplete; pg.scanned = scanned; mine.push(pg);
       if (txt) { pg.text = txt; pg.fromPdf = true; pg.el.className = 'page done'; fromText++; }
     }
     if (fromText) {
-      mine.forEach((pg) => { if (!pg.incomplete) { pg.fromPdf = true; pg.el.className = 'page done'; } });   // pages without text are just blank/pictures
+      // Pages without text are blank, unless they show a scanned page: those are left for "Read text".
+      mine.forEach((pg) => { if (!pg.incomplete && !pg.scanned) { pg.fromPdf = true; pg.el.className = 'page done'; } });
       refreshPdfText();
-      const inc = mine.filter((pg) => pg.incomplete).length;
-      const blank = mine.length - fromText - inc;
-      setStatus(`${name}: text taken straight from the PDF (${fromText} page${fromText > 1 ? 's' : ''}${blank ? `, ${blank} without text` : ''}) — no reading needed. Copy or save as Word.${inc ? ` ${inc} page${inc > 1 ? 's' : ''} had damaged text inside the PDF — click “Read text” to read ${inc > 1 ? 'them' : 'it'} as a picture.` : ''}`);
+      const inc = mine.filter((pg) => pg.incomplete).length, scans = mine.filter((pg) => pg.scanned).length;
+      const blank = mine.length - fromText - inc - scans;
+      const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+      setStatus(`${name}: text taken straight from the PDF (${plural(fromText, 'page')}${blank ? `, ${blank} blank` : ''}) — no reading needed. Copy or save as Word.`
+        + (inc ? ` ${plural(inc, 'page')} had damaged text inside the PDF — click “Read text” to read ${inc > 1 ? 'them' : 'it'} as a picture.` : '')
+        + (scans ? ` ${plural(scans, 'page')} ${scans > 1 ? 'are scans' : 'is a scan'} — click “Read text” to read ${scans > 1 ? 'them' : 'it'}.` : ''));
     } else if (mine.some((pg) => pg.incomplete)) {
       setStatus(`${name}: the text inside this PDF is damaged (missing vowel signs), so it will be read as a picture. Click “Read text”.`, true);
     }
+    return fromText > 0 || mine.some((pg) => pg.incomplete);   // true: the status line already says what to do
   } else {
     const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.bmp' ? 'image/bmp' : ext.startsWith('.tif') ? 'image/tiff' : 'image/jpeg';
-    const img = await loadImage(`data:${mime};base64,${data}`).catch(() => null);
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const img = await loadImage(url).catch(() => null);
+    URL.revokeObjectURL(url);
     if (!img) { setStatus(`Couldn't open ${name} (TIFF files may need converting to PNG/JPG).`, true); return; }
     const c = document.createElement('canvas');
     c.width = img.naturalWidth; c.height = img.naturalHeight;
@@ -151,12 +143,21 @@ function prepare(page, enhance) {
   let blocks = [];
   try { blocks = $('optColumns') && $('optColumns').checked ? findBlocks(g, w, h, thr) : []; } catch (e) { console.error(e); }
   if (blocks.length > 1) {
-    const boxes = [], lines = [], blk = []; let pitch = 0;
-    blocks.forEach((bl, bi) => {
-      const bw = bl.r - bl.l, bh = bl.b - bl.t; if (bw < 20 || bh < 10) return;
+    const subs = blocks.map((bl, bi) => {
+      const bw = bl.r - bl.l, bh = bl.b - bl.t; if (bw < 20 || bh < 10) return null;
       const sub = new Float32Array(bw * bh);
       for (let y = 0; y < bh; y++) sub.set(g.subarray((bl.t + y) * w + bl.l, (bl.t + y) * w + bl.r), y * bw);
-      const r = findLines(sub, bw, bh, thr);
+      return { bl, bi, bw, bh, sub, own: findLines(sub, bw, bh, thr) };
+    }).filter(Boolean);
+    // A block of one or two lines cannot show its own line spacing (it would cut the vowel-sign rows
+    // off as separate lines). With real columns side by side, use the tallest block's spacing;
+    // otherwise the blocks are stacked in one column and the whole page shows the spacing best.
+    const tall = subs.reduce((a, s) => (!a || s.bh > a.bh ? s : a), null);
+    const sideBySide = subs.some((a) => subs.some((b) => a !== b && a.bl.t < b.bl.b && b.bl.t < a.bl.b && (a.bl.r <= b.bl.l || b.bl.r <= a.bl.l)));
+    const ref = sideBySide && tall ? tall.own.pitch : findLines(g, w, h, thr).pitch;
+    const boxes = [], lines = [], blk = []; let pitch = 0;
+    subs.forEach(({ bl, bi, bw, bh, sub, own }) => {
+      const r = bh >= 4 * ref ? own : findLines(sub, bw, bh, thr, ref);
       pitch = pitch || r.pitch;
       r.boxes.forEach((b) => { lines.push(cropToPng(sub, bw, b, r.pitch)); boxes.push({ l: b.l + bl.l, t: b.t + bl.t, r: b.r + bl.l, b: b.b + bl.t }); blk.push(bi); });
     });
@@ -224,8 +225,9 @@ async function readAll() {
 /* ---------- buttons ---------- */
 btn.open.onclick = async () => {
   const files = await window.ocr.openFiles();
-  for (const f of files) await addFile(f);
-  if (files.length && !pages.every((p) => p.fromPdf)) setStatus(`${pages.length} page(s) ready. Click “Read text”.`);
+  let told = false;
+  for (const f of files) told = (await addFile(f)) || told;
+  if (files.length && !told && !pages.every((p) => p.fromPdf)) setStatus(`${pages.length} page(s) ready. Click “Read text”.`);
   refreshButtons();
 };
 btn.read.onclick = readAll;
@@ -295,14 +297,13 @@ window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.bod
 window.addEventListener('drop', async (e) => {
   e.preventDefault(); document.body.classList.remove('dragging');
   if (busy) return;
+  let told = false;
   for (const file of e.dataTransfer.files) {
     const ext = '.' + file.name.split('.').pop().toLowerCase();
-    if (!exts.includes(ext)) { setStatus(`Skipped ${file.name} — not an image or PDF.`, true); continue; }
-    const buf = new Uint8Array(await file.arrayBuffer());
-    let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-    await addFile({ name: file.name, data: btoa(bin), ext });
+    if (!exts.includes(ext)) { setStatus(`Skipped ${file.name} — not an image or PDF.`, true); told = true; continue; }
+    told = (await addFile({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), ext })) || told;
   }
-  if (!pages.every((p) => p.fromPdf)) setStatus(`${pages.length} page(s) ready. Click “Read text”.`);
+  if (!told && !pages.every((p) => p.fromPdf)) setStatus(`${pages.length} page(s) ready. Click “Read text”.`);
   refreshButtons();
 });
 
@@ -321,5 +322,8 @@ window.addEventListener('paste', async (e) => {
   }
 });
 
-window.ocr.info().then((i) => { document.title = `Thaana PDF to Word ${i.version}`; });
+window.ocr.info().then((i) => {
+  document.title = `Thaana PDF to Word ${i.version}`;
+  if (!i.model) setStatus('Reading scans is not available: the Thaana reading model (lang/div.traineddata) is missing. Typed PDFs still work.', true);
+});
 refreshButtons();

@@ -12,9 +12,9 @@ Works on **Windows** and **Mac** (Intel and Apple chip). Everything runs on your
 - **Scans and photos (experimental):** use *Read text*. Newspaper and magazine pages are split into columns and read right to left.
 
 ## Download
-Go to the **Releases** page and download:
-- **Windows:** `Thaana-OCR-…-Windows.exe` (no install; double-click it)
-- **Mac:** the `.dmg` for your Mac
+Go to the **Releases** page and download the `.zip` for your computer:
+- **Windows:** `Thaana-OCR-…-Windows.zip`. Unzip it and double-click the `.exe` inside (no install).
+- **Mac:** `Thaana-OCR-…-Mac-arm64.zip` for Apple-chip Macs (M1 and later) or `…-Mac-x64.zip` for Intel Macs. Unzip it and drag the app to Applications.
 
 The app is not code-signed, so your computer will warn you the first time. This is normal for free apps.
 - **Windows:** if you see "Windows protected your PC", click **More info ▸ Run anyway**.
@@ -28,7 +28,8 @@ See the **User Manual** in the `docs` folder (`docs/Thaana-PDF-to-Word-User-Manu
 
 ## Known limits
 - Very old PDFs whose text was stored in legacy (non-Unicode) fonts can't be read directly and fall back to the weaker scan reader.
-- Text inside long wrapped table cells may be split across extra rows.
+- Tables with borders are rebuilt cell by cell. In tables without borders, a cell that wraps onto a second line is joined back only when the first (right-hand) column of that row does not wrap too.
+- With *Ignore Arabic text* on, lines that are mostly Arabic (verses, prayers) are left out. Arabic words inside a Dhivehi sentence are kept, without their vowel marks.
 - Always read through the result before using it for anything important.
 
 ## Build it yourself
@@ -36,7 +37,13 @@ Install Node.js (LTS), then in this folder run `npm install`, then:
 - Windows build: `npm run dist:win`
 - Mac build: double-click `build-mac.command`, or `npm run dist:mac-separate`
 
-The scan-reading model is not part of this source repository. Without it, PDF mode works fully and scan reading uses the basic reader.
+Scan reading uses the app's own model `lang/divx.traineddata` when it is present (it is not part of this source repository). Otherwise it uses the standard Tesseract Dhivehi model `lang/div.traineddata` (from tessdata_fast), which is included. It is less accurate.
+
+## Tests
+- `npm test`: checks the PDF reader against test PDFs (paragraphs, vowel signs, bordered and borderless tables, scanned pages, form XObjects).
+- `npm run test:app`: opens the real app, drops the test PDFs on it, saves a Word file and runs *Read text*.
+
+The test PDFs are made on your computer, not stored in the repository. On Windows with Word and Edge installed, run `pwsh test/make-fixtures.ps1`, then `python test/make-fixtures.py` (needs `pip install pillow pypdf`).
 
 ## Privacy
 No file, text or image leaves your computer. This repository must never contain PDFs, student scripts, exam papers or fonts (see `.gitignore`).

@@ -8,7 +8,8 @@ const docx = require('docx');
 
 // Language files live in /lang (unpacked from the asar archive when packaged).
 const LANG_DIR = path.join(__dirname, 'lang').replace('app.asar', 'app.asar.unpacked');
-const THAANA_MODEL = fs.existsSync(path.join(LANG_DIR, 'divx.traineddata')) ? 'divx' : 'div';
+// divx = the app's own model (not in the source repo); div = Tesseract's standard Dhivehi model.
+const THAANA_MODEL = ['divx', 'div'].find((m) => fs.existsSync(path.join(LANG_DIR, m + '.traineddata'))) || null;
 
 let win;
 let scheduler = null;
@@ -16,6 +17,7 @@ let schedulerLangs = '';
 const N_WORKERS = Math.max(1, Math.min(4, os.cpus().length - 1));
 
 async function getScheduler(withEnglish) {
+  if (!THAANA_MODEL) throw new Error(`No Thaana reading model found. Put div.traineddata in ${LANG_DIR}.`);
   const langs = withEnglish ? `${THAANA_MODEL}+eng` : THAANA_MODEL;
   if (scheduler && schedulerLangs === langs) return scheduler;
   if (scheduler) await scheduler.terminate();
@@ -161,13 +163,16 @@ ipcMain.handle('read-words', () => {
 });
 // ---- handwriting labelling: one PNG + one line of text per labelled line ----
 function labelDir() { const d = path.join(app.getPath('documents'), 'Thaana-handwriting-labels'); fs.mkdirSync(path.join(d, 'images'), { recursive: true }); return d; }
+const validId = (id) => typeof id === 'string' && /^[a-z0-9]{4,32}$/.test(id);   // ids become file names
 ipcMain.handle('label-save', (_e, { id, png, text, meta }) => {
+  if (!validId(id)) throw new Error('bad label id');
   const d = labelDir();
   fs.writeFileSync(path.join(d, 'images', id + '.png'), Buffer.from(png, 'base64'));
   fs.appendFileSync(path.join(d, 'labels.tsv'), `${id}\t${text.replace(/[\t\r\n]+/g, ' ')}\t${meta || ''}\n`, 'utf8');
   return d;
 });
 ipcMain.handle('label-undo', (_e, id) => {
+  if (!validId(id)) return;
   const d = labelDir(); try { fs.unlinkSync(path.join(d, 'images', id + '.png')); } catch {}
   const f = path.join(d, 'labels.tsv');
   try { fs.writeFileSync(f, fs.readFileSync(f, 'utf8').split('\n').filter((l) => l && !l.startsWith(id + '\t')).join('\n') + '\n', 'utf8'); } catch {}
@@ -181,6 +186,7 @@ function escapeHtml(s) {
 }
 
 app.whenReady().then(createWindow);
+app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });   // macOS dock click
 app.on('window-all-closed', async () => {
   if (scheduler) await scheduler.terminate();
   app.quit();

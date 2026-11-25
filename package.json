@@ -8,6 +8,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "start": "electron .",
+    "test": "node --test test/pdf.test.mjs",
+    "test:app": "electron test/app-smoke.cjs",
     "dist:win": "electron-builder --win portable --x64",
     "dist:mac": "electron-builder --mac dmg --universal",
     "dist:mac-separate": "electron-builder --mac dmg --arm64 --x64"

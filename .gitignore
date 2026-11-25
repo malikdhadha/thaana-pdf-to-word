@@ -3,7 +3,7 @@ node_modules/
 dist/
 # never publish: documents, scans, student work, exam papers
 *.pdf
-!docs/*.pdf
+!docs/Thaana-PDF-to-Word-User-Manual.pdf
 *.doc
 *.docx
 *.jpg
@@ -18,6 +18,8 @@ dist/
 *.ttf
 *.otf
 !renderer/fonts/NotoSansThaana-Regular.ttf
+# test PDFs and images are generated locally (test/make-fixtures.*)
+test/fixtures/
 # handwriting labels and training data
 Thaana-handwriting-labels/
 train/

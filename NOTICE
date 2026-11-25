@@ -6,6 +6,7 @@ This app includes or depends on the following open-source software:
 - PDF.js / pdfjs-dist (Apache-2.0)             https://github.com/mozilla/pdf.js
 - Tesseract.js and Tesseract OCR (Apache-2.0)  https://github.com/naptha/tesseract.js
 - docx (MIT)                                   https://github.com/dolanmiu/docx
+- Tesseract trained data eng.traineddata and div.traineddata from tessdata_fast (Apache-2.0)  https://github.com/tesseract-ocr/tessdata_fast
 - Noto Sans Thaana font (SIL Open Font License 1.1), Noto Project  https://fonts.google.com/noto
 
 Fonts such as Faruma are not included. When you save a Word file the app names the Dhivehi font you pick; Word uses the copy installed on your computer.

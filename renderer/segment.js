@@ -92,10 +92,11 @@ function linePitch(p) {
 }
 
 // Returns text line boxes {l,t,r,b} in reading order (top to bottom), plus the line pitch.
-export function findLines(g, w, h, thr) {
+// pitchHint: line spacing measured elsewhere (a block of one or two lines cannot show its own).
+export function findLines(g, w, h, thr, pitchHint = 0) {
   const p = new Float64Array(h);
   for (let y = 0; y < h; y++) { let s = 0; const o = y * w; for (let x = 0; x < w; x++) if (g[o + x] < thr) s++; p[y] = s; }
-  const P = linePitch(Array.from(p));
+  const P = pitchHint || linePitch(Array.from(p));
   const k = Math.max(3, Math.round(P * 0.45));
   const win = Array.from({ length: k }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (k - 1 || 1)));
   const ws = win.reduce((a, b) => a + b, 0) || 1;
